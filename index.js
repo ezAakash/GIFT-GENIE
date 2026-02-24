@@ -1,5 +1,14 @@
 import OpenAI from "openai";
-import { autoResizeTextarea, checkEnvironment, setLoading } from "./utils.js";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
+
+import {
+  checkEnvironment,
+  autoResizeTextarea,
+  setLoading,
+  showStream,
+} from "./utils.js";
+
 checkEnvironment();
 
 // Initialize an OpenAI client for your provider using env vars
@@ -20,17 +29,35 @@ function start() {
   giftForm.addEventListener("submit", handleGiftRequest);
 }
 
-// Initialize messages array with system prompt
-const messages = [
-  {
-    role: "system",
-    content: `You are the Gift Genie!
-    Make your gift suggestions thoughtful and practical.
-    Your response must be under 100 words. 
-    Skip intros and conclusions. 
-    Only output gift suggestions.`,
-  },
-];
+
+const systemPrompt = `You are the Gift Genie that can search the web! 
+
+    You generate gift ideas that feel thoughtful, specific, and genuinely useful.
+    Your output must be in structured Markdown.
+    Do not write introductions or conclusions.
+    Start directly with the gift suggestions.
+
+    Each gift must:
+    - Have a clear heading with the actual product's name
+    - Include a short explanation of why it works
+    - Include the current price or a price range
+    - Include one or more links to websites or social media business pages
+    where the gift can be bought
+
+    Prefer products that are widely available and well-reviewed.
+    If you can't find a working link, say so rather than guessing.
+
+    If the user mentions a location, situation, or constraint,
+    adapt the gift ideas and add another short section 
+    under each gift that guides the user to get the gift in that 
+    constrained context.
+
+    After the gift ideas, include a section titled "Questions for you"
+    with clarifying questions that would help improve the recommendations.
+
+    Finish with a section with H2 heading titled "Wanna browse yourself?"
+    with links to various ecommerce sites with relevant search queries and filters 
+    already applied.`;
 
 async function handleGiftRequest(e) {
   // Prevent default form submission
@@ -40,43 +67,47 @@ async function handleGiftRequest(e) {
   const userPrompt = userInput.value.trim();
   if (!userPrompt) return;
 
-  /**
-   * Challenge: Adding AI to the Gift Genie UI
-   *
-   * The UI is wired up.
-   * The loading state is ready.
-   * But no AI request happens yet.
-   *
-   * Your task:
-   *
-   * 1. Add a user message to the messages array
-   * 2. Send a chat completions request
-   * 3. Extract the assistant’s response
-   * 4. Render it inside #output-content
-   *
-   * 💡 Check the hints folder for more guidance!
-   */
-
-  // Set loading state
+  // Set loading state (hides output, animates lamp)
   setLoading(true);
 
-  messages.push({
-    role: "user",
-    content: userPrompt
-  })
+  try {
+    // Use Responses API with web_search_preview tool
+    const response = await openai.responses.create({
+      model: process.env.AI_MODEL,
+      input: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      tools: [{ type: "web_search_preview" }],
+    });
 
-  const response = await openai.chat.completions.create({
-    model: process.env.AI_MODEL,
-    messages
-  })
+    // Show output container
+    showStream();
 
-  console.log(response)
-  const giftSuggestions = response.choices[0].message.content
+    // Get the response text
+    const giftSuggestions = response.output_text;
 
-  outputContent.textContent = giftSuggestions
+    // Convert Markdown to HTML
+    const html = marked.parse(giftSuggestions);
 
-  // Clear loading state
-  setLoading(false);
+    // Sanitize the HTML to prevent XSS attacks
+    const safeHTML = DOMPurify.sanitize(html);
+
+    // Render the output
+    outputContent.innerHTML = safeHTML;
+
+    console.log(giftSuggestions);
+  } catch (error) {
+    // Log the error for debugging
+    console.error(error);
+
+    // Display friendly error message
+    outputContent.textContent =
+      "Sorry, I can't access what I need right now. Please try again in a bit.";
+  } finally {
+    // Always clear loading state (shows output, resets lamp)
+    setLoading(false);
+  }
 }
 
 start();
